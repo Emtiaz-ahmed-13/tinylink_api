@@ -30,6 +30,7 @@ class UrlController extends Controller
         $url = $request->user()->urls()->create([
             'original_url' => $request->validated('url'),
             'short_code' => $code,
+            'click_count' => 0,
         ]);
 
         return $this->success('URL shortened successfully', $url, 201);
@@ -48,6 +49,17 @@ class UrlController extends Controller
         $url->delete();
 
         return $this->success('URL deleted successfully');
+    }
+
+    public function stats(Url $url): JsonResponse
+    {
+        $this->authorize('view', $url);
+
+        return $this->success('URL statistics retrieved successfully', [
+            'url' => $url->original_url,
+            'short_code' => $url->short_code,
+            'click_count' => $url->click_count,
+        ]);
     }
 
     private function uniqueShortCode(): string
