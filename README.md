@@ -9,7 +9,7 @@ Authenticated users can create short links, list and delete their own URLs, and 
 - PHP 8.3+
 - Composer
 - SQLite (default) or MySQL / PostgreSQL
-- Postman (optional) — collection file: `postman/TinyLink.postman_collection.json`
+- Postman (optional) — import `postman/TinyLink.postman_collection.json`
 
 ## Setup
 
@@ -21,17 +21,27 @@ cp .env.example .env
 php artisan key:generate
 ```
 
-If `database/database.sqlite` does not exist:
+SQLite (default in `.env.example`):
 
 ```bash
 touch database/database.sqlite
+php artisan migrate
+php artisan db:seed
+php artisan serve
+```
+
+API base: `http://127.0.0.1:8000`  
+Health: `GET http://127.0.0.1:8000/up`
+
+Reset local data:
+
+```bash
+php artisan migrate:fresh --seed
 ```
 
 ## Database
 
-### SQLite (local default)
-
-`.env.example` already uses:
+### SQLite
 
 ```env
 DB_CONNECTION=sqlite
@@ -52,6 +62,8 @@ DB_USERNAME=root
 DB_PASSWORD=
 ```
 
+Then run `php artisan migrate` and `php artisan db:seed`.
+
 ### PostgreSQL
 
 ```env
@@ -63,53 +75,35 @@ DB_USERNAME=postgres
 DB_PASSWORD=
 ```
 
-## Migrations and seeders
-
-```bash
-php artisan migrate
-php artisan db:seed
-```
-
-Reset everything (destroys local data):
-
-```bash
-php artisan migrate:fresh --seed
-```
-
-### Demo accounts
+## Demo accounts
 
 | Email | Password |
 | --- | --- |
 | `demo@tinylink.test` | `password` |
 | `other@tinylink.test` | `password` |
 
-`demo` user has several URLs, including short code `docs` → `https://laravel.com/docs`. Use `other` to confirm User B cannot view or delete User A’s URLs (403).
-
-## Run the server
-
-```bash
-php artisan serve
-```
-
-- API base: `http://127.0.0.1:8000`
-- Health: `GET http://127.0.0.1:8000/up`
+`demo` has sample URLs, including `GET /docs` → `https://laravel.com/docs`.  
+Log in as `other` and call `GET /api/urls/{id}` for a `demo` URL to confirm **403**.
 
 ## Authentication
 
 Protected routes use Sanctum personal access tokens.
 
-1. Call `POST /api/register` or `POST /api/login`
+1. `POST /api/register` or `POST /api/login`
 2. Copy `data.token`
-3. Send on later requests:
+3. Send on every protected request:
 
 ```http
 Accept: application/json
 Authorization: Bearer <token>
+Content-Type: application/json
 ```
 
-Always send `Accept: application/json` from Postman. Without it, unauthenticated calls can fail in confusing ways.
+Register body: `name`, `email`, `password`, `password_confirmation`.
 
-`POST /api/logout` deletes the **current** token.
+`POST /api/logout` deletes the **current** token only.
+
+Always send `Accept: application/json`. Without it, unauthenticated API calls can fail instead of returning JSON `401`.
 
 ## API endpoints
 
@@ -127,6 +121,8 @@ Always send `Accept: application/json` from Postman. Without it, unauthenticated
 | GET | `/{short_code}` | No | Redirect and increment clicks |
 
 ## Example requests
+
+Replace `<token>` with the value from login/register.
 
 ### Register
 
@@ -146,6 +142,22 @@ curl -X POST http://127.0.0.1:8000/api/login \
   -d '{"email":"demo@tinylink.test","password":"password"}'
 ```
 
+### Me
+
+```bash
+curl http://127.0.0.1:8000/api/me \
+  -H "Accept: application/json" \
+  -H "Authorization: Bearer <token>"
+```
+
+### Logout
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/logout \
+  -H "Accept: application/json" \
+  -H "Authorization: Bearer <token>"
+```
+
 ### Create short URL
 
 ```bash
@@ -156,7 +168,7 @@ curl -X POST http://127.0.0.1:8000/api/urls \
   -d '{"url":"https://example.com/this-is-a-very-long-url"}'
 ```
 
-Optional custom code:
+Optional custom code (bonus):
 
 ```json
 {
@@ -165,7 +177,7 @@ Optional custom code:
 }
 ```
 
-Success:
+Success (`201`). Extra fields such as `user_id` and timestamps may also be present:
 
 ```json
 {
@@ -180,7 +192,64 @@ Success:
 }
 ```
 
-Validation error (`422`):
+### List URLs
+
+```bash
+curl "http://127.0.0.1:8000/api/urls?page=1&per_page=10" \
+  -H "Accept: application/json" \
+  -H "Authorization: Bearer <token>"
+```
+
+### URL details
+
+```bash
+curl http://127.0.0.1:8000/api/urls/1 \
+  -H "Accept: application/json" \
+  -H "Authorization: Bearer <token>"
+```
+
+### URL stats (bonus)
+
+```bash
+curl http://127.0.0.1:8000/api/urls/1/stats \
+  -H "Accept: application/json" \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+{
+  "success": true,
+  "message": "URL statistics retrieved successfully",
+  "data": {
+    "url": "https://example.com",
+    "short_code": "aB92x",
+    "click_count": 25
+  }
+}
+```
+
+### Delete URL
+
+```bash
+curl -X DELETE http://127.0.0.1:8000/api/urls/1 \
+  -H "Accept: application/json" \
+  -H "Authorization: Bearer <token>"
+```
+
+### Redirect (public, no token)
+
+Browser:
+
+```text
+http://127.0.0.1:8000/docs
+http://127.0.0.1:8000/{short_code}
+```
+
+After a visit, `click_count` on that URL increases by 1.
+
+## Error responses
+
+Validation (`422`):
 
 ```json
 {
@@ -201,33 +270,30 @@ Unauthenticated (`401`):
 }
 ```
 
-### Redirect
+Forbidden — User A accessing User B’s URL (`403`):
 
-Open in a browser (no token):
-
-```text
-http://127.0.0.1:8000/docs
+```json
+{
+  "message": "This action is unauthorized."
+}
 ```
 
-or
-
-```text
-http://127.0.0.1:8000/{short_code}
-```
+Missing URL (`404`).
 
 ## Postman
 
-1. Open Postman → Import → `postman/TinyLink.postman_collection.json`
-2. Collection variable `baseUrl` is `http://127.0.0.1:8000`
-3. Run **Auth → Login** (demo user) — the token is saved to `token`
-4. Run URL requests; they send `Authorization: Bearer {{token}}`
+1. Import `postman/TinyLink.postman_collection.json`
+2. `baseUrl` = `http://127.0.0.1:8000`
+3. Run **Auth → Login** (`demo@tinylink.test` / `password`) — token is saved to `{{token}}`
+4. Run URL requests (they send `Authorization: Bearer {{token}}`)
 
 ## Assumptions
 
-- Short codes are unique. On MySQL, default collations are often case-insensitive, so `aB92x` and `ab92x` may collide. SQLite treats them as distinct.
+- Short codes are unique. MySQL default collations are often case-insensitive (`aB92x` vs `ab92x` may collide). SQLite treats them as distinct.
 - Redirect is a public HTTP 302 via `redirect()->away()`.
-- A user can only view, delete, or see stats for URLs they own (`UrlPolicy`). Another user’s URL returns 403; a missing id returns 404.
-- `user_id` is never accepted from the request body; it comes from the Sanctum user.
+- Users can only view, delete, or see stats for URLs they own (`UrlPolicy`). Another user’s URL returns 403; a missing id returns 404.
+- `user_id` is never taken from the JSON body; it comes from the authenticated Sanctum user.
+- Stats JSON is wrapped in the same `{ success, message, data }` envelope as other API responses.
 - No link expiry or rate limiting in v1.
 
 ## Tests
